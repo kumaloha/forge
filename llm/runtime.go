@@ -10,10 +10,10 @@ import (
 // Runtime is the main LLM orchestration engine. It holds a provider, prompt
 // loader, config, and a bounded-concurrency semaphore.
 type Runtime struct {
-	provider Provider
-	prompts  *PromptLoader
-	config   LLMConfig
-	sem      chan struct{}
+	provider    Provider
+	prompts     *PromptLoader
+	config      LLMConfig
+	sem         chan struct{}
 	maxAttempts int
 }
 
@@ -37,10 +37,10 @@ func NewRuntime(cfg RuntimeConfig) *Runtime {
 		maxAttempts = 3
 	}
 	return &Runtime{
-		provider: cfg.Provider,
-		prompts:  cfg.Prompts,
-		config:   cfg.LLMConfig,
-		sem:      make(chan struct{}, conc),
+		provider:    cfg.Provider,
+		prompts:     cfg.Prompts,
+		config:      cfg.LLMConfig,
+		sem:         make(chan struct{}, conc),
 		maxAttempts: maxAttempts,
 	}
 }
@@ -50,6 +50,16 @@ func NewRuntime(cfg RuntimeConfig) *Runtime {
 // dispatches to the appropriate mode handler.
 func (r *Runtime) Chat(ctx context.Context, spec PromptSpec, vars map[string]any) (Response, error) {
 	return r.chatWithSchema(ctx, spec, vars, nil)
+}
+
+// Call sends a raw provider request through the runtime retry/concurrency path.
+// This is useful for callers that need provider-native capabilities such as
+// multimodal image inputs while still relying on forge retry semantics.
+func (r *Runtime) Call(ctx context.Context, req ProviderRequest) (Response, error) {
+	if r == nil {
+		return Response{}, fmt.Errorf("llm: runtime is nil")
+	}
+	return r.callSingle(ctx, req)
 }
 
 // chatWithSchema is the internal entry that supports an optional JSON schema.
@@ -84,6 +94,18 @@ func (r *Runtime) chatWithSchema(ctx context.Context, spec PromptSpec, vars map[
 // Max 2 retries (3 total attempts). Retries on 5xx, timeout, 429.
 // Exponential backoff: 1s, 2s.
 func (r *Runtime) chatSingle(ctx context.Context, model string, built BuiltPrompt, search, thinking bool, temp float64, schema *Schema) (Response, error) {
+	return r.callSingle(ctx, ProviderRequest{
+		Model:       model,
+		System:      built.System,
+		User:        built.User,
+		Temperature: temp,
+		Search:      search,
+		Thinking:    thinking,
+		JSONSchema:  schema,
+	})
+}
+
+func (r *Runtime) callSingle(ctx context.Context, req ProviderRequest) (Response, error) {
 	maxAttempts := r.maxAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = 3
@@ -96,20 +118,12 @@ func (r *Runtime) chatSingle(ctx context.Context, model string, built BuiltPromp
 	for i := range maxAttempts {
 		start := time.Now()
 
-		pr, err := r.callProvider(ctx, ProviderRequest{
-			Model:       model,
-			System:      built.System,
-			User:        built.User,
-			Temperature: temp,
-			Search:      search,
-			Thinking:    thinking,
-			JSONSchema:  schema,
-		})
+		pr, err := r.callProvider(ctx, req)
 
 		elapsed := time.Since(start)
 
 		trace := AttemptTrace{
-			Model:   model,
+			Model:   req.Model,
 			Latency: elapsed,
 		}
 

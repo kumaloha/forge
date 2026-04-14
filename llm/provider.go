@@ -9,11 +9,18 @@ type Schema struct {
 	Required   []string
 }
 
+type ContentPart struct {
+	Type     string
+	Text     string
+	ImageURL string
+}
+
 // ProviderRequest is what we send to an LLM provider.
 type ProviderRequest struct {
 	Model       string
 	System      string
 	User        string
+	UserParts   []ContentPart
 	Temperature float64
 	Search      bool    // Qwen-specific: enable_search
 	Thinking    bool    // Qwen-specific: enable_thinking

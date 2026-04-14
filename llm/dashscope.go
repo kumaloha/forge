@@ -120,13 +120,23 @@ func (e *APIError) Retryable() bool {
 func (d *Dashscope) buildRequestBody(req ProviderRequest) ([]byte, error) {
 	systemContent := req.System
 	userContent := req.User
-	if req.JSONSchema != nil && !containsJSONHint(systemContent, userContent) {
-		userContent = strings.TrimSpace(userContent + "\n\nReturn valid JSON only.")
+	userParts := append([]ContentPart(nil), req.UserParts...)
+	if req.JSONSchema != nil && !containsJSONHint(systemContent, userContent, partsText(userParts)) {
+		if len(userParts) > 0 {
+			userParts = append(userParts, ContentPart{Type: "text", Text: "Return valid JSON only."})
+		} else {
+			userContent = strings.TrimSpace(userContent + "\n\nReturn valid JSON only.")
+		}
 	}
 
-	messages := []chatMessage{
-		{Role: "system", Content: systemContent},
-		{Role: "user", Content: userContent},
+	messages := make([]chatMessage, 0, 2)
+	if strings.TrimSpace(systemContent) != "" {
+		messages = append(messages, chatMessage{Role: "system", Content: systemContent})
+	}
+	if len(userParts) > 0 {
+		messages = append(messages, chatMessage{Role: "user", Content: contentPartsToWire(userParts)})
+	} else {
+		messages = append(messages, chatMessage{Role: "user", Content: userContent})
 	}
 
 	body := chatRequest{
@@ -177,6 +187,35 @@ func containsJSONHint(parts ...string) bool {
 	return false
 }
 
+func partsText(parts []ContentPart) string {
+	texts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if strings.TrimSpace(part.Text) != "" {
+			texts = append(texts, part.Text)
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
+func contentPartsToWire(parts []ContentPart) []chatMessagePart {
+	out := make([]chatMessagePart, 0, len(parts))
+	for _, part := range parts {
+		switch strings.TrimSpace(part.Type) {
+		case "image_url":
+			out = append(out, chatMessagePart{
+				Type:     "image_url",
+				ImageURL: &chatImageURL{URL: part.ImageURL},
+			})
+		default:
+			out = append(out, chatMessagePart{
+				Type: "text",
+				Text: part.Text,
+			})
+		}
+	}
+	return out
+}
+
 // parseResponse extracts a ProviderResponse from the raw JSON.
 func (d *Dashscope) parseResponse(data []byte) (ProviderResponse, error) {
 	var resp chatResponse
@@ -211,7 +250,17 @@ func (d *Dashscope) parseResponse(data []byte) (ProviderResponse, error) {
 
 type chatMessage struct {
 	Role    string `json:"role"`
-	Content string `json:"content"`
+	Content any    `json:"content"`
+}
+
+type chatMessagePart struct {
+	Type     string        `json:"type"`
+	Text     string        `json:"text,omitempty"`
+	ImageURL *chatImageURL `json:"image_url,omitempty"`
+}
+
+type chatImageURL struct {
+	URL string `json:"url"`
 }
 
 type responseFormat struct {

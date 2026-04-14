@@ -130,6 +130,31 @@ func TestChatSinglePassesTemperature(t *testing.T) {
 	}
 }
 
+func TestRuntimeCallPassesImageParts(t *testing.T) {
+	cp := &capturingProvider{}
+	rt := newTestRuntime(cp, LLMConfig{
+		Default: DefaultConfig{Model: "qwen3-max"},
+	})
+
+	_, err := rt.Call(context.Background(), ProviderRequest{
+		Model:  "qwen3-max",
+		System: "sys",
+		UserParts: []ContentPart{
+			{Type: "image_url", ImageURL: "data:image/png;base64,abc"},
+			{Type: "text", Text: "describe"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Call() error = %v", err)
+	}
+	if len(cp.req.UserParts) != 2 {
+		t.Fatalf("UserParts = %#v, want 2 parts", cp.req.UserParts)
+	}
+	if cp.req.UserParts[0].Type != "image_url" || cp.req.UserParts[0].ImageURL != "data:image/png;base64,abc" {
+		t.Fatalf("first part = %#v", cp.req.UserParts[0])
+	}
+}
+
 func TestChatStampsResolvedRoleSeparatelyFromModel(t *testing.T) {
 	mp := newMockProvider()
 	rt := newTestRuntime(mp, LLMConfig{

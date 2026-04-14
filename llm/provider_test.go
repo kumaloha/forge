@@ -99,6 +99,57 @@ func TestDashscopeRequestBody(t *testing.T) {
 	}
 }
 
+func TestDashscopeRequestBodyWithImageParts(t *testing.T) {
+	var captured map[string]any
+
+	d := newDashscopeTestProvider(t, func(r *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &captured)
+
+		return newHTTPResponse(http.StatusOK, `{
+			"model": "qwen3-max",
+			"choices": [
+				{"message": {"content": "ok"}, "finish_reason": "stop"}
+			],
+			"usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
+		}`), nil
+	})
+
+	_, err := d.Call(context.Background(), ProviderRequest{
+		Model:  "qwen3-max",
+		System: "sys",
+		UserParts: []ContentPart{
+			{Type: "image_url", ImageURL: "data:image/png;base64,abc"},
+			{Type: "text", Text: "describe this image"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Call() error = %v", err)
+	}
+
+	msgs, ok := captured["messages"].([]any)
+	if !ok || len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %v", captured["messages"])
+	}
+	userMsg := msgs[1].(map[string]any)
+	content, ok := userMsg["content"].([]any)
+	if !ok || len(content) != 2 {
+		t.Fatalf("user content = %v, want 2 parts", userMsg["content"])
+	}
+	first := content[0].(map[string]any)
+	if first["type"] != "image_url" {
+		t.Fatalf("first part = %v, want image_url", first)
+	}
+	img := first["image_url"].(map[string]any)
+	if img["url"] != "data:image/png;base64,abc" {
+		t.Fatalf("image_url = %v", img["url"])
+	}
+	second := content[1].(map[string]any)
+	if second["type"] != "text" || second["text"] != "describe this image" {
+		t.Fatalf("second part = %v", second)
+	}
+}
+
 func TestDashscopeRequestBodyOmitsDisabledFlags(t *testing.T) {
 	var captured map[string]any
 
